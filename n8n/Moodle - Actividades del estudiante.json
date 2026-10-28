@@ -1,0 +1,116 @@
+{
+  "name": "Moodle - Actividades del estudiante",
+  "nodes": [
+    {
+      "id": "65f2737e-a7d0-47cf-bd6b-3b5719302769",
+      "name": "Cuando el agente lo llama",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "moodleUserId",
+              "type": "string"
+            },
+            {
+              "name": "dias",
+              "type": "number"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "e952f660-9092-4c1b-914d-d6d91941285c",
+      "name": "Leer actividades próximas de Moodle",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://TU-MOODLE/webservice/rest/server.php",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "wsfunction",
+              "value": "core_calendar_get_action_events_by_timesort"
+            },
+            {
+              "name": "moodlewsrestformat",
+              "value": "json"
+            },
+            {
+              "name": "timesortfrom",
+              "value": "={{ Math.floor(Date.now() / 1000) }}"
+            },
+            {
+              "name": "timesortto",
+              "value": "={{ Math.floor(Date.now() / 1000) + (Number($json.dias) || 14) * 86400 }}"
+            },
+            {
+              "name": "limitnum",
+              "value": "50"
+            }
+          ]
+        }
+      },
+      "credentials": {},
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "5c53aae7-1736-4306-b3ce-a5c577094e91",
+      "name": "Formatear actividades",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Normaliza las actividades de Moodle al catálogo de KAIROS (INF, ACT, TAR, TAL, QUI, EXP, PRO, PAR, FIN).\n// No inventa datos: el calendario de Moodle NO trae ponderación, por eso \"ponderacion\" va en null.\nconst all = $input.all().map(i => i.json || {});\nconst fallo = all.find(d => d.exception || d.errorcode || d.error);\nconst events = all.flatMap(d => Array.isArray(d.events) ? d.events : []);\n\nconst quitarTildes = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\nconst NIVEL = { INF: 1, ACT: 2, TAR: 3, TAL: 3, QUI: 4, EXP: 4, PRO: 4, PAR: 5, FIN: 5 };\nconst REGLAS = [\n  ['FIN', /entrega final|proyecto final|trabajo final|examen final/],\n  ['PAR', /parcial|examen|sustentacion/],\n  ['QUI', /quiz|prueba corta|evaluacion corta/],\n  ['EXP', /exposicion|presentacion oral/],\n  ['PRO', /proyecto/],\n  ['TAL', /taller/],\n  ['ACT', /actividad|ejercicio|lectura/],\n  ['INF', /aviso|informacion|comunicado/],\n  ['TAR', /tarea|trabajo escrito|entrega/],\n];\nconst POR_MODULO = { assign: 'TAR', quiz: 'QUI', workshop: 'TAL' };\nconst TIPO_LEGADO = { PAR: 'examen', QUI: 'examen', FIN: 'examen', TAL: 'taller', PRO: 'proyecto', TAR: 'tarea' };\nconst limpiar = n => String(n || '').replace(/\\s+(is due|vence|se vence|closes|se cierra|opens|se abre|abre)\\s*$/i, '').trim();\n\nconst ahora = Date.now() / 1000;\nconst actividades = events\n  .filter(e => !e.action || e.action.actionable !== false)\n  .map(e => {\n    const nombre = limpiar(e.activityname || e.name);\n    const texto = quitarTildes(nombre + ' ' + (e.name || ''));\n    const porNombre = REGLAS.find(([, re]) => re.test(texto));\n    const codigo = porNombre ? porNombre[0] : (POR_MODULO[String(e.modulename || '').toLowerCase()] || null);\n    return {\n      materia: (e.course && e.course.fullname) || '',\n      tematica: e.activityname || e.name || '',\n      actividad: nombre,\n      tipo: TIPO_LEGADO[codigo] || 'otro',\n      codigo,\n      nivel_importancia: codigo ? NIVEL[codigo] : null,\n      fecha_iso: e.timesort ? new Date(e.timesort * 1000).toISOString() : null,\n      dias_restantes: e.timesort ? Math.ceil((e.timesort - ahora) / 86400) : null,\n      ponderacion: null,\n      url_moodle: e.url || '',\n      estado: 'pendiente',\n      // Se pide confirmación si no hubo coincidencia por nombre (solo módulo o sin tipo).\n      requiere_confirmacion: !porNombre,\n    };\n  })\n  .sort((a, b) => String(a.fecha_iso).localeCompare(String(b.fecha_iso)));\n\nconst error = fallo\n  ? (fallo.message || (fallo.error && fallo.error.message) || fallo.exception || 'No se pudo consultar Moodle')\n  : null;\nreturn [{ json: { total: actividades.length, actividades, error } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Cuando el agente lo llama": {
+      "main": [
+        [
+          {
+            "node": "Leer actividades próximas de Moodle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer actividades próximas de Moodle": {
+      "main": [
+        [
+          {
+            "node": "Formatear actividades",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": null
+}

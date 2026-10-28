@@ -24,6 +24,8 @@
 
 - `N8N_WEBHOOK_URL` y `N8N_SHARED_SECRET` son secretos: solo en el panel del proveedor. El navegador nunca recibe la URL ni la clave de n8n.
 - El texto del chat sale hacia n8n y el modelo de lenguaje configurado. No lo uses con información sensible y revisa la política de datos del proveedor del modelo antes de usar datos reales.
+- Con un único token de Moodle (piloto), el agente consulta los datos de una sola persona para quien lo use. Define `AGENT_ALLOWED_EMAILS` con las cuentas autorizadas; vacío significa que todas las cuentas podrían ver esos datos. El token de Moodle se guarda solo como credencial de n8n y se revoca desde *Claves de seguridad* si se expone.
+- El webhook de n8n exige la cabecera `x-kairos-key`; no lo dejes abierto ni con CORS `*`.
 - La respuesta del agente se trata como no confiable: se muestra con `textContent` y el servidor limita su tamaño y número de acciones. Ninguna acción se ejecuta sin confirmación.
 
 ## Reportar un problema

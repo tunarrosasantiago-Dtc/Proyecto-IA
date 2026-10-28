@@ -23,3 +23,5 @@ services:
         sync: false
       - key: N8N_SHARED_SECRET
         sync: false
+      - key: AGENT_ALLOWED_EMAILS
+        sync: false

@@ -79,10 +79,13 @@ app.delete("/api/auth/account",sameOrigin,authLimiter,requireAuth,asyncRoute(asy
  res.clearCookie("kairos.sid",{httpOnly:true,secure:production,sameSite:"lax"});res.json({ok:true});
 }));
 const agentConfigured=()=>Boolean(process.env.N8N_WEBHOOK_URL&&process.env.N8N_SHARED_SECRET);
+// Piloto con un solo token de Moodle: limita el asistente a las cuentas listadas (correos separados por comas).
+async function agentAllowed(userId){const list=String(process.env.AGENT_ALLOWED_EMAILS||"").split(",").map(v=>v.trim().toLowerCase()).filter(Boolean);if(!list.length)return true;const result=await pool.query("SELECT email FROM app_users WHERE id=$1",[userId]);return Boolean(result.rows[0]&&list.includes(String(result.rows[0].email).toLowerCase()))}
 function cleanAgentPayload(value,maxBytes){try{const text=JSON.stringify(value);return text&&Buffer.byteLength(text,"utf8")<=maxBytes?JSON.parse(text):null}catch{return null}}
-app.get("/api/agent/status",requireAuth,(req,res)=>res.json({configured:agentConfigured()}));
+app.get("/api/agent/status",requireAuth,asyncRoute(async(req,res)=>res.json({configured:agentConfigured(),allowed:await agentAllowed(req.session.userId)})));
 app.post("/api/agent",sameOrigin,requireAuth,agentLimiter,asyncRoute(async(req,res)=>{
  if(!agentConfigured())return res.status(503).json({error:"El asistente aún no está configurado en el servidor."});
+ if(!(await agentAllowed(req.session.userId)))return res.status(403).json({error:"El asistente está en piloto y tu cuenta aún no está habilitada."});
  const mensaje=String(req.body.mensaje||"").trim();
  if(!mensaje||mensaje.length>4000)return res.status(400).json({error:"Escribe un mensaje de 1 a 4000 caracteres."});
  let target;try{target=new URL(process.env.N8N_WEBHOOK_URL)}catch{return res.status(503).json({error:"La URL del asistente no es válida."})}
@@ -93,7 +96,7 @@ app.post("/api/agent",sameOrigin,requireAuth,agentLimiter,asyncRoute(async(req,r
   const data=await upstream.json().catch(()=>null);
   if(!upstream.ok||!data||typeof data!=="object")return res.status(502).json({error:"El asistente no pudo responder."});
   const acciones=Array.isArray(data.acciones)?data.acciones.filter(a=>a&&typeof a==="object").slice(0,20):[];
-  res.json({texto:String(data.texto||"").slice(0,8000),acciones});
+  res.json({texto:String(data.texto??data.respuesta??"").slice(0,8000),acciones});
  }catch(err){
   if(err&&err.name==="AbortError")return res.status(504).json({error:"El asistente tardó demasiado en responder."});
   console.error("Agent proxy error",err&&err.message);res.status(502).json({error:"El asistente no está disponible ahora."});

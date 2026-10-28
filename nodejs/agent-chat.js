@@ -89,7 +89,11 @@
       const response = await fetch("/api/agent/status", { credentials: "same-origin" });
       if (!response.ok) return setStatus("", false);
       const data = await response.json();
-      setStatus(data.configured ? "" : "El asistente aún no está configurado en el servidor. La revisión local de instrucciones sigue disponible en Actividades.", Boolean(data.configured));
+      const ready = Boolean(data.configured) && data.allowed !== false;
+      let message = "";
+      if (!data.configured) message = "El asistente aún no está configurado en el servidor. La revisión local de instrucciones sigue disponible en Actividades.";
+      else if (data.allowed === false) message = "El asistente está en piloto y tu cuenta aún no está habilitada. La revisión local sigue disponible en Actividades.";
+      setStatus(message, ready);
     } catch { setStatus("", false); }
   }
 
@@ -111,15 +115,18 @@
   }
 
   function describeAction(action) {
-    const tipo = String(action.tipo || "acción");
-    const datos = Array.isArray(action.datos) ? action.datos : [];
-    if (!datos.length) return tipo;
-    return tipo + ": " + datos.slice(0, 8).map(item => {
+    const tipo = String(action.tipo || action.type || "acción");
+    const datos = Array.isArray(action.datos) ? action.datos : [action];
+    const parts = datos.slice(0, 8).map(item => {
       if (item && typeof item === "object") {
-        return [item.titulo || item.title || item.nombre, item.curso, item.vence ? "vence " + String(item.vence).slice(0, 10) : "", item.prioridad !== undefined ? "prioridad " + item.prioridad : ""].filter(Boolean).join(" · ");
+        const due = item.fecha_iso || item.vence;
+        const known = [item.titulo || item.title || item.actividad || item.nombre, item.materia || item.curso, due ? "vence " + String(due).slice(0, 10) : "", item.prioridad !== undefined ? "prioridad " + item.prioridad : ""].filter(Boolean);
+        if (known.length) return known.join(" · ");
+        return Object.entries(item).filter(([key, value]) => key !== "tipo" && key !== "type" && value !== null && typeof value !== "object").slice(0, 5).map(([key, value]) => key + ": " + value).join(", ");
       }
       return String(item);
-    }).join(" | ");
+    }).filter(Boolean);
+    return parts.length ? tipo + ": " + parts.join(" | ") : tipo;
   }
 
   function addActions(bubble, actions) {

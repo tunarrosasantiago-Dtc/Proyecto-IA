@@ -1,0 +1,120 @@
+{
+  "name": "Web del estudiante - Chat con Asistente Académico",
+  "nodes": [
+    {
+      "id": "3b90afeb-a151-48b2-a462-60e904ba6687",
+      "name": "Mensaje desde la web",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        16
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "asistente-academico",
+        "responseMode": "responseNode",
+        "options": {},
+        "authentication": "headerAuth"
+      },
+      "webhookId": "0b6a5e8e-a56c-41dd-828a-f5fb4f09a39f"
+    },
+    {
+      "id": "6a27fce2-8a2b-4daf-ab4e-04e39260eb2d",
+      "name": "Asistente Académico",
+      "type": "n8n-nodes-base.messageAnAgent",
+      "typeVersion": 3.1,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "agentSource": "referenced",
+        "agentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "VXdXOX5PeBfhT0lr",
+          "cachedResultName": "Asistente Académico Moodle + Recursos"
+        },
+        "message": "=[moodleUserId: {{ $json.body.moodleUserId || \"piloto\" }}]\n{{ $json.body.mensaje }}\n\nCandidatos detectados por el revisor local de KAIROS: {{ JSON.stringify($json.body.candidatos || {}) }}\nAdvertencias del revisor local: {{ JSON.stringify($json.body.advertencias || []) }}",
+        "advanced": {
+          "enableStreaming": false,
+          "session": {
+            "session": {
+              "sessionIdType": "customKey",
+              "sessionKey": "={{ $json.body.sessionId || $json.body.estudianteId }}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "c49331c4-406c-4594-bd66-9344a33ad4e9",
+      "name": "Separar texto y acciones",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        16
+      ],
+      "parameters": {
+        "jsCode": "// Separa el texto para el estudiante del bloque de acciones propuestas.\n// Acepta ```acciones ... ``` (formato actual) y <acciones>...</acciones>.\nconst item = $input.first().json || {};\nlet salida = String(item.output || item.text || '');\nlet acciones = [];\nconst patrones = [/```acciones\\s*([\\s\\S]*?)```/, /<acciones>([\\s\\S]*?)<\\/acciones>/];\nfor (const re of patrones) {\n  const m = salida.match(re);\n  if (!m) continue;\n  try {\n    const parsed = JSON.parse(m[1].trim());\n    acciones = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.acciones) ? parsed.acciones : [parsed]);\n  } catch (e) { acciones = []; }\n  salida = salida.replace(m[0], '');\n}\nconst texto = salida.trim();\n// \"respuesta\" se conserva por compatibilidad con la versión anterior del flujo.\nreturn [{ json: { texto, respuesta: texto, acciones } }];\n"
+      }
+    },
+    {
+      "id": "8c88fb5e-6ccb-4966-9a05-b82f0ef05c7b",
+      "name": "Responder a la web",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        896,
+        16
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Mensaje desde la web": {
+      "main": [
+        [
+          {
+            "node": "Asistente Académico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Asistente Académico": {
+      "main": [
+        [
+          {
+            "node": "Separar texto y acciones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar texto y acciones": {
+      "main": [
+        [
+          {
+            "node": "Responder a la web",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": null
+}

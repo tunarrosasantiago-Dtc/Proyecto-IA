@@ -1,110 +1,97 @@
-# Configurar el agente de n8n para KAIROS
+# Agente de n8n + piloto con Moodle
 
-El navegador **nunca** llama a n8n. El flujo es:
+Flujo completo:
 
 ```
-Navegador → POST /api/agent (servidor KAIROS, exige sesión) → Webhook de n8n → Agente → respuesta { texto, acciones }
+Navegador → POST /api/agent (servidor KAIROS: sesión, origen, límite, lista de piloto)
+          → Webhook n8n "asistente-academico" (exige la clave x-kairos-key)
+          → Agente "Asistente Académico Moodle + Recursos"
+                 └─ herramienta Moodle → subflujo "Moodle - Actividades del estudiante" → API REST de Moodle
+          → Código "Separar texto y acciones" → Respond to Webhook → { texto, respuesta, acciones }
 ```
 
-El servidor KAIROS agrega la identidad del estudiante desde su sesión (`estudianteId` y `sessionId` = id de la cuenta) y firma la petición con una clave compartida. n8n solo acepta peticiones con esa clave.
+Los workflows corregidos están en la carpeta [`n8n/`](../n8n/).
 
-## 1. Variables en Render (Environment)
+## 1. Qué se corrigió en tus workflows
+
+| Workflow / nodo | Antes | Ahora | Por qué |
+|---|---|---|---|
+| Web · Webhook | Sin autenticación, CORS `*` | **Header Auth** (`x-kairos-key`), sin CORS | Con la URL abierta cualquiera podía gastar tu cuota del modelo y consultar Moodle. La llamada la hace el servidor, no el navegador. |
+| Web · Mensaje al agente | Solo `moodleUserId` y mensaje | Añade `candidatos` y `advertencias` del revisor local | El agente recibe la extracción ya hecha y no decide entre fechas ambiguas. |
+| Web · Separar texto y acciones | Devolvía `respuesta` | Devuelve `texto` **y** `respuesta`; acepta ` ```acciones ` y `<acciones>` | El servidor KAIROS lee `texto` (y acepta `respuesta`). |
+| Web · Responder | `JSON.stringify($json)` + cabecera CORS | `{{ $json }}`, sin CORS | Innecesario en llamada servidor a servidor. |
+| Moodle · HTTP Request | "Simplified Custom Auth" (causaba el triángulo rojo), URL de ejemplo | Credencial **Query Auth** `wstoken`; `On Error: Continue` | Más simple y verificable; un fallo de red llega al agente como mensaje y no rompe el flujo. |
+| Moodle · Formatear | `tipo` genérico (`examen`, `tarea`…) | Añade `codigo` (INF…FIN), `nivel_importancia`, `dias_restantes`, `ponderacion: null`, `requiere_confirmacion` | Usa tu catálogo de nueve tipos. Limpia sufijos de Moodle ("vence", "is due"). Si solo se clasificó por el módulo, pide confirmar. |
+
+`ponderacion` va en `null` a propósito: el calendario de Moodle **no** informa cuánto vale cada actividad. No se inventa; el cálculo de prioridad renormaliza sin ese componente, como dice tu ficha.
+
+## 2. Aplicar los cambios en n8n
+
+Recomendado: **editar tus workflows en el lugar** (así el agente conserva la referencia a su subflujo). Cada cambio está completo en los JSON de `n8n/`; copia los valores de ahí.
+
+**Workflow "Moodle - Actividades del estudiante"**
+1. Nodo *Leer actividades próximas de Moodle*: URL = `https://TU-MOODLE/webservice/rest/server.php`. Authentication = *Generic Credential Type* → *Query Auth* → crea la credencial con **Name** `wstoken` y **Value** = el token (sección 3). *Settings → On Error* = *Continue (using regular output)*.
+2. Nodo *Formatear actividades*: reemplaza el código por el de `n8n/Moodle - Actividades del estudiante.json`.
+
+**Workflow "Web del estudiante - Chat con Asistente Académico"**
+1. Nodo *Mensaje desde la web*: Authentication = *Header Auth* → credencial **Name** `x-kairos-key`, **Value** = el valor de `N8N_SHARED_SECRET`. Borra *Allowed Origins*.
+2. Nodo *Asistente Académico*: cambia el campo Message por el del JSON.
+3. Nodo *Separar texto y acciones*: reemplaza el código por el del JSON.
+4. Nodo *Responder a la web*: Response Body = `{{ $json }}` y borra la cabecera `Access-Control-Allow-Origin`.
+5. **Publish**.
+
+**Agente** (no viaja en el JSON exportado; revísalo en la interfaz):
+- La herramienta "Moodle actividades" debe apuntar al subflujo de Moodle y mapear `dias`.
+- Sus instrucciones deben decir que las acciones propuestas van en un bloque ` ```acciones [ ... ] ``` ` al final, con objetos como `{"tipo":"actividad","actividad":"...","fecha_iso":"...","prioridad":82}`; y que no ejecute acciones con efectos sin confirmación.
+- Debe indicar que la prioridad se calcula solo con la herramienta de priorización y que, si `requiere_confirmacion` es `true` o hay `advertencias`, pregunte al estudiante.
+
+Si prefieres importar los JSON como workflows nuevos, vuelve a seleccionar el subflujo en la herramienta del agente, porque el ID cambia.
+
+## 3. Token de Moodle (piloto de un solo usuario)
+
+El token identifica **a una persona** y se comporta como su contraseña para la API. Opciones:
+- *Preferencias → Seguridad → Claves de seguridad* → clave de "Moodle mobile web service" (si aparece).
+- Con usuario y contraseña propios (no sirve si entras por Google/Microsoft/SSO; en ese caso pídelo al administrador):
+  `curl -d "username=USUARIO" -d "password=CLAVE" -d "service=moodle_mobile_app" https://TU-MOODLE/login/token.php`
+- Si Moodle responde `accessexception` en la prueba, la función `core_calendar_get_action_events_by_timesort` no está habilitada para el servicio: el administrador debe permitirla o la universidad no admite este acceso.
+
+Guárdalo **solo** en la credencial de n8n. No lo pegues en el chat, el código ni GitHub. Si se expone, revócalo en la misma página de claves.
+
+## 4. Variables en Render
 
 | Variable | Valor |
 |---|---|
-| `N8N_WEBHOOK_URL` | URL de **Production** del webhook, `https://TU-N8N/webhook/kairos-chat` (no la de `webhook-test`) |
-| `N8N_SHARED_SECRET` | Texto aleatorio largo (32+ caracteres). Genéralo con `openssl rand -hex 32` |
+| `N8N_WEBHOOK_URL` | `https://TU-N8N/webhook/asistente-academico` (URL de **Production**, no `webhook-test`) |
+| `N8N_SHARED_SECRET` | Texto aleatorio de 32+ caracteres (`openssl rand -hex 32`); el mismo valor de la credencial `x-kairos-key` |
+| `AGENT_ALLOWED_EMAILS` | **Tu correo de KAIROS** (varios, separados por comas). Ver advertencia. |
 
-Sin estas variables el chat muestra "no configurado" y el resto de KAIROS sigue funcionando. En local, ponlas en `nodejs/.env`.
+> **Advertencia del piloto.** Con un solo token, el agente lee el Moodle de *una* persona sin importar quién escribe en el chat. Si `AGENT_ALLOWED_EMAILS` queda vacío, **cualquier cuenta de KAIROS vería tus actividades de Moodle**. Mientras uses un token único, deja ahí solo las cuentas de quienes están autorizados a verlas. En esa lista el servidor compara el correo de la cuenta; las demás reciben "piloto, cuenta no habilitada".
 
-## 2. Nodo Webhook ("Mensaje desde la web")
+## 5. Prueba paso a paso
 
-- HTTP Method: `POST`
-- Path: `kairos-chat`
-- Authentication: **Header Auth**. Crea una credencial con Name `x-kairos-key` y Value = el mismo `N8N_SHARED_SECRET`.
-- Respond: **Using 'Respond to Webhook' Node**
-- No necesitas CORS: la llamada la hace el servidor, no el navegador.
+**A. Subflujo de Moodle aislado.** En el workflow de Moodle, *Execute workflow* con entrada `{"moodleUserId":"piloto","dias":14}`.
+- Esperado: nodo HTTP verde; *Formatear* devuelve `total` > 0 y `error: null`.
+- Si `error` dice token inválido o `accessexception`, ver sección 3. Si dice `ENOTFOUND`, revisa la URL.
 
-Cuerpo que recibe (`$json.body`):
-
-```json
-{
-  "mensaje": "texto del estudiante",
-  "estudianteId": "uuid de la cuenta",
-  "sessionId": "uuid de la cuenta",
-  "candidatos": { "category": [], "dates": [], "weights": [], "hours": [] },
-  "advertencias": ["..."]
-}
-```
-
-`candidatos` y `advertencias` son la extracción del revisor local (`ai-agent.js`); pueden venir `null`.
-
-## 3. Nodo del agente: campo Message
-
-```
-[estudianteId: {{ $json.body.estudianteId }}]
-{{ $json.body.mensaje }}
-Candidatos detectados por el revisor local: {{ JSON.stringify($json.body.candidatos) }}
-Advertencias del revisor local: {{ JSON.stringify($json.body.advertencias) }}
-```
-
-Session ID de la memoria (Simple Memory): `{{ $json.body.sessionId }}`.
-
-> `moodleUserId` **no** viaja desde KAIROS todavía: la app no guarda ese dato por cuenta. Ver "Pendiente" más abajo.
-
-## 4. System Message del agente
-
-```
-Eres EduPriority, el asistente académico de KAIROS. Respondes siempre en español.
-
-REGLAS
-- No haces los trabajos del estudiante: orientas, organizas y priorizas.
-- La prioridad se calcula SOLO con la herramienta de priorización (P = 0.45·I + 0.35·U + 0.20·W). No inventes prioridades, fechas ni ponderaciones.
-- Si falta la ponderación, no la inventes: indica que el cálculo usa solo los datos disponibles.
-- Si el texto es ambiguo (varias fechas, "opcional" y "vital" a la vez, porcentajes sin contexto), pregunta al estudiante antes de concluir.
-- Explica siempre por qué una actividad es más importante que otra.
-- Nunca ejecutes acciones con efectos (enviar correos, entregas) sin confirmación explícita.
-- Si una herramienta falla, dilo; no inventes datos.
-
-FORMATO DE SALIDA
-Responde con texto para el estudiante. Si propones acciones, agrégalas AL FINAL en este bloque exacto:
-<acciones>[{"tipo":"actividad","datos":[{"titulo":"...","curso":"...","vence":"2026-11-15T18:00","prioridad":82}]}]</acciones>
-```
-
-## 5. Nodo Code "Separar texto y acciones"
-
-```javascript
-const item = $input.first().json;
-const salida = String(item.output ?? item.text ?? "");
-const m = salida.match(/<acciones>([\s\S]*?)<\/acciones>/);
-let acciones = [];
-if (m) {
-  try { const p = JSON.parse(m[1]); if (Array.isArray(p)) acciones = p; } catch (e) { /* bloque inválido: se ignora */ }
-}
-const texto = salida.replace(/<acciones>[\s\S]*?<\/acciones>/g, "").trim();
-return [{ json: { texto, acciones } }];
-```
-
-## 6. Nodo Respond to Webhook
-
-- Respond With: `JSON`
-- Response Body (Expression): `{{ { texto: $json.texto, acciones: $json.acciones } }}`
-
-Luego pulsa **Publish** en el workflow. La URL de producción solo responde con el workflow publicado.
-
-## 7. Probar sin la web
-
+**B. Webhook con la clave.** Con el workflow publicado:
 ```bash
-curl -X POST "https://TU-N8N/webhook/kairos-chat" \
-  -H "Content-Type: application/json" \
-  -H "x-kairos-key: TU_SECRETO" \
-  -d '{"mensaje":"¿Qué hago primero esta semana?","estudianteId":"prueba","sessionId":"prueba"}'
+curl -s -X POST "https://TU-N8N/webhook/asistente-academico" \
+  -H "Content-Type: application/json" -H "x-kairos-key: TU_SECRETO" \
+  -d '{"mensaje":"¿Qué tengo pendiente en los próximos 14 días y qué debo hacer primero?","estudianteId":"prueba","sessionId":"prueba"}'
 ```
+- Esperado: JSON con `texto` que menciona actividades reales de tu Moodle, y `acciones` (puede ir vacío).
 
-Debe devolver `{"texto":"...","acciones":[...]}`. Un `403` indica que la clave no coincide.
+**C. Seguridad del webhook.** Repite B **sin** el encabezado `x-kairos-key`: debe responder `403` (o `401`), nunca una respuesta del agente.
 
-## Pendiente (decisiones tuyas)
+**D. Ambigüedad.** Mensaje: *"El taller es opcional pero vital para el parcial. Entrega 05/11/2026 (avance) y 10/11/2026, vale 15%"*.
+- Esperado: el agente no elige una fecha por su cuenta, explica la contradicción y pide confirmar.
 
-1. **Moodle por estudiante.** Hoy el subflujo de Moodle no sabe de qué estudiante leer. Opciones: (a) piloto con un solo token de Moodle guardado en credenciales de n8n; (b) guardar por cuenta, cifrado y en el servidor, el token de cada estudiante. La (b) exige una tabla nueva y una pantalla para vincular; no se implementó sin conocer tu Moodle.
-2. **Khan Academy** no tiene API pública de tareas: usar ingreso manual o importar desde Teams/Classroom.
-3. **Recordatorios por correo**: requieren un servicio de correo autorizado y confirmación del estudiante.
+**E. Desde KAIROS.** Con las variables en Render y tu correo en `AGENT_ALLOWED_EMAILS`: inicia sesión → **Asistente** → acepta el aviso → repite la pregunta de B.
+- Con otra cuenta no incluida en la lista: debe mostrar "cuenta aún no habilitada".
+
+## 6. Límites conocidos
+
+- Khan Academy no tiene API pública de tareas: ingreso manual o desde Teams/Classroom.
+- Moodle por estudiante (un token por cuenta, cifrado) sigue pendiente; el piloto no lo sustituye.
+- Recordatorios por correo: requieren servicio autorizado y confirmación del estudiante.
+- El tiempo de espera total es de 55 s. Si n8n o Render están "dormidos", la primera respuesta puede tardar.

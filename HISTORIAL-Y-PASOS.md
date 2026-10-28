@@ -43,4 +43,5 @@ La conexión directa a Moodle, Canvas, Teams u otros sistemas requiere identific
 - Se añadió la ruta `POST /api/agent` (exige sesión, valida origen, limita a 12 consultas por minuto, tiempo máximo de 55 s) que firma la petición con `N8N_SHARED_SECRET` y reenvía a `N8N_WEBHOOK_URL`. La identidad del estudiante sale de la sesión del servidor, no del navegador.
 - `ai-agent.js` incorpora `chat()`; la revisión local sigue funcionando sin IA. Nueva vista **Asistente** (`agent-chat.js`) con aviso de privacidad y aceptación previa; las respuestas se muestran como texto, no como HTML.
 - Se documentó la configuración de n8n en `docs/N8N-AGENTE.md`. Moodle por estudiante, Khan Academy y recordatorios por correo siguen pendientes.
+- Con los workflows reales exportados se corrigió: webhook abierto (ahora Header Auth, sin CORS), respuesta `respuesta` → `texto`, credencial de Moodle (Query Auth `wstoken`) y clasificación al catálogo INF–FIN. Se añadieron `n8n/` con los JSON corregidos y la lista de cuentas del piloto (`AGENT_ALLOWED_EMAILS`).
 - La versión `python/` no incluye este cambio.
