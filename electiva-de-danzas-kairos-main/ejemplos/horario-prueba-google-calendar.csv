@@ -1,0 +1,5 @@
+Subject,Start Date,Start Time,End Date,End Time,All Day Event,Description,Location,Private
+"Bloque de análisis exploratorio",10/28/2026,4:00 PM,10/28/2026,4:45 PM,False,"Revisar calidad y distribuciones del dataset de práctica.","Biblioteca",True
+"Práctica de inferencia estadística",10/30/2026,10:00 AM,10/30/2026,11:30 AM,False,"Interpretar intervalo de confianza y supuestos.","En casa",True
+"Diseño de consultas SQL",11/02/2026,5:00 PM,11/02/2026,6:30 PM,False,"Modelar entidades y validar consultas.","Laboratorio",True
+"Evaluación de modelos",11/04/2026,3:00 PM,11/04/2026,4:30 PM,False,"Comparar métricas y documentar límites del modelo.","Biblioteca",True

@@ -1,0 +1,5 @@
+Actividad,Fecha,Ponderacion,Horas,Descripcion
+"Explorar y limpiar datos de ventas",2026-10-28T18:00,15,2,"Revisar tipos, nulos, duplicados y valores atípicos con pandas."
+"Contrastar una hipótesis con datos",2026-10-30T17:00,20,2.5,"Declarar hipótesis, supuestos, intervalo de confianza y límites."
+"Diseñar tablas y consultas SQL",2026-11-02T19:00,25,3,"Modelar entidades, normalizar y escribir consultas reproducibles."
+"Comparar modelos y explicar métricas",2026-11-04T16:00,30,4,"Evitar fuga de datos y justificar métricas para el problema."

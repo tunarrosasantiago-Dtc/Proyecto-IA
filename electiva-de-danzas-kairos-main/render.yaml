@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: kairos-electiva
+    runtime: node
+    rootDir: nodejs
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: APP_ORIGIN
+        fromService:
+          type: web
+          name: kairos-electiva
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: N8N_WEBHOOK_URL
+        sync: false
+      - key: N8N_SHARED_SECRET
+        sync: false
